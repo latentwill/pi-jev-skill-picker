@@ -2,7 +2,7 @@
 
 A Pi extension that keeps the Agent Skills catalog out of model requests and replaces it with one ranking tool backed by [TypeSafe's Jev](https://docs.typesafe.ai) System One model.
 
-Skills stay loaded, so `/skill:name` keeps working. Before each agent turn the extension removes Pi's generated `<skills>` catalog from the effective system prompt and exposes one tool.
+Skills stay loaded, so `/skill:name` keeps working. Before each agent turn the extension removes Pi's generated `<skills>` catalog from the effective system prompt and gives the model two tools to pull skills in on demand.
 
 `skill_search` takes a plain-language description of the task, rates every enabled skill against it, and returns the complete `SKILL.md` instructions of the skills that apply.
 
@@ -32,24 +32,6 @@ Every skill is rated on the same three ordered levels:
 | 2 | Directly applicable. Covers the exact tool or workflow, and changes how the task is done. |
 
 Jev returns a probability-weighted position on those levels. Code applies the floor, sorts, and loads the winners. A skill has to lean toward "directly applicable" to be loaded, and ties break on confidence.
-
-## Why the questions are sharded
-
-Sharding buys latency, not headroom. All 137 skills fit in one request at roughly 17,000 tokens against a 64,000 limit, and that single request is the slowest option measured:
-
-| Target shard size | Requests | Split | Median |
-|---|---|---|---|
-| 137 | 1 | 137 | 2,743 ms |
-| 100 | 2 | 100 + 37 | 1,598 ms |
-| 69 | 2 | 69 + 68 | 975 ms |
-| 50 | 3 | 46 + 46 + 45 | ~900 ms |
-| 25 | 6 | 23x5 + 22 | ~800 ms |
-
-Jev evaluates the questions inside a request in parallel, but the request itself is one unit of work. Splitting it across several requests runs them at the same time.
-
-Latency follows the largest shard rather than the number of requests. The 100 and 69 rows are both two requests, but 100 + 37 takes 64% longer because the small shard finishes early and waits. So `shardSize` sets a target maximum instead of a fixed chunk. It decides how many shards to use, then spreads skills evenly across them, and any two shards end up within one item of each other.
-
-Gains flatten below about 46. Sharding does cost a few extra tokens, since the shared state repeats in every request, but that state is a single sentence, so six shards cost 2% more than one.
 
 ## Fallback
 
@@ -113,7 +95,7 @@ A name that does not match returns close alternatives instead of failing:
 No skill named 'fleece'. Did you mean 'fleet'?
 ```
 
-Matching ignores case and separators, so `Fleet` and `review codex auto` resolve to `fleet` and `review-codex-auto` and load without a second call. Anything further off is reported as a suggestion for the agent to confirm. One bad name among good ones does not fail the call: the rest load and the miss is noted at the end.
+Matching ignores case and separators, so `Fleet` and `review codex auto` resolve to `fleet` and `review-codex-auto` and load without a second call. Anything further off is reported as a suggestion for the agent to confirm. One bad name among good ones does not fail the call. The rest load, and the miss is noted at the end.
 
 Both tools return skill content as tool results. Neither writes to the system prompt, which is what keeps the cached prefix stable across turns.
 
@@ -122,8 +104,8 @@ Disabled skills stay undiscoverable, because both tools work from Pi's resolved 
 ## Development
 
 ```sh
-npm install
-npm run check   # typecheck and unit tests
+bun install
+bun run check   # typecheck and unit tests
 ```
 
 Tests stub `fetch`, so they make no network calls.
