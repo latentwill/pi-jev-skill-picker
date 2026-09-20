@@ -1,4 +1,4 @@
-# pi-skill-jev
+# pi-jev-skill-picker
 
 A Pi extension that keeps the full Agent Skills catalog out of model requests and replaces it with a single ranking tool backed by [TypeSafe's Jev](https://docs.typesafe.ai) System One model.
 
@@ -56,7 +56,7 @@ Raise `minScore` if too many adjacent skills load; lower it if a relevant skill 
 ## Install
 
 ```sh
-pi install git:github.com/safzanpirani/pi-skill-jev
+pi install git:github.com/safzanpirani/pi-jev-skill-picker
 ```
 
 Reload an existing Pi session with `/reload`, or start a new session.

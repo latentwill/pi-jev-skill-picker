@@ -1,5 +1,5 @@
 {
-  "name": "pi-skill-jev",
+  "name": "pi-jev-skill-picker",
   "version": "0.1.0",
   "description": "Keeps Pi's full Agent Skills catalog out of every model request and ranks skills for the current task with TypeSafe's Jev (System One) instead of a subagent fork.",
   "keywords": ["pi", "pi-extension", "skills", "typesafe", "jev", "system-one"],

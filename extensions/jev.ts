@@ -1,5 +1,5 @@
 /**
- * Pure core for pi-skill-jev: configuration, Jev question construction,
+ * Pure core for pi-jev-skill-picker: configuration, Jev question construction,
  * response ranking, and a deterministic lexical fallback.
  *
  * Nothing here touches Pi. Everything here is unit-testable.
