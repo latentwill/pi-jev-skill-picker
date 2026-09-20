@@ -209,7 +209,6 @@ export function rank(
 	skills: SkillEntry[],
 	answers: Record<string, ScoreAnswer>,
 	minScore: number,
-	limit: number,
 ): Ranked[] {
 	const ranked: Ranked[] = [];
 	for (const [index, skill] of skills.entries()) {
@@ -228,7 +227,7 @@ export function rank(
 			|| right.confidence - left.confidence
 			|| left.skill.name.localeCompare(right.skill.name),
 	);
-	return ranked.slice(0, limit);
+	return ranked;
 }
 
 export class JevError extends Error {
@@ -315,7 +314,14 @@ export async function rankSkills(
 	limit: number,
 	signal?: AbortSignal,
 	fetchImpl: typeof fetch = fetch,
-): Promise<{ ranked: Ranked[]; model?: string; inputTokens: number; shards: number; failures: string[] }> {
+): Promise<{
+	ranked: Ranked[];
+	alsoRanked: Ranked[];
+	model?: string;
+	inputTokens: number;
+	shards: number;
+	failures: string[];
+}> {
 	const shards = shard(skills, config.shardSize);
 	// Offsets must follow the actual shard lengths. Shards are balanced, so they
 	// are not multiples of shardSize, and index * shardSize would map answers
@@ -358,5 +364,14 @@ export async function rankSkills(
 		throw new JevError(`Every Jev request failed. ${failures[0]}`);
 	}
 
-	return { ranked: rank(skills, answers, config.minScore, limit), model, inputTokens, shards: shards.length, failures };
+	const scored = rank(skills, answers, config.minScore);
+	return {
+		ranked: scored.slice(0, limit),
+		// Cleared the floor but lost on score. Reported so the agent can force-load one.
+		alsoRanked: scored.slice(limit),
+		model,
+		inputTokens,
+		shards: shards.length,
+		failures,
+	};
 }

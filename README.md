@@ -98,6 +98,11 @@ This extension replaces `pi-skill-search`. Uninstall that one, along with its `p
 
 - `task`: required plain-language description of what the agent is about to do, naming the concrete tools, services or files involved
 - `maxSkills`: optional limit from 1 to 5; defaults to the configured `maxSkills`
+- `names`: optional list of exact skill names to load directly. When set, `task` is ignored and no ranking request is made.
+
+A result loads the top `maxSkills` skills in full and then lists every other skill that cleared the floor, with its score and path. Nothing above the floor is hidden. A task like "review this diff and hand it to codex" puts 12 skills over 1.4, so the 9 that did not make the cut are named rather than dropped.
+
+The agent loads one of those by calling `skill_search` again with `names`. That path reads the files straight off disk, so it skips Jev entirely and costs nothing.
 
 That `task` string is everything Jev sees of the request, so ranking quality rests on it. When the wrong skills load, the string is recorded in the tool call details and is the first place to look.
 

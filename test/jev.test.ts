@@ -128,7 +128,7 @@ test("buildRequest puts only the task in the state", () => {
 	assert.equal(request.model, DEFAULT_MODEL);
 });
 
-test("rank orders by score, applies the floor, and respects the limit", () => {
+test("rank orders by score and applies the floor", () => {
 	const skills = [skill("a", ""), skill("b", ""), skill("c", ""), skill("d", "")];
 	const ranked = rank(
 		skills,
@@ -139,13 +139,13 @@ test("rank orders by score, applies the floor, and respects the limit", () => {
 			[questionId(3)]: { score: 1.2, confidence: 0.95 },
 		},
 		1.0,
-		2,
 	);
-	assert.deepEqual(ranked.map((entry) => entry.skill.name), ["b", "d"]);
+	// rank keeps everything above the floor; the caller decides how many to load.
+	assert.deepEqual(ranked.map((entry) => entry.skill.name), ["b", "d", "c"]);
 });
 
 test("rank skips missing and non-numeric answers", () => {
-	const ranked = rank([skill("a", ""), skill("b", "")], { [questionId(1)]: { score: Number.NaN } }, 0, 5);
+	const ranked = rank([skill("a", ""), skill("b", "")], { [questionId(1)]: { score: Number.NaN } }, 0);
 	assert.deepEqual(ranked, []);
 });
 

@@ -18,7 +18,7 @@ import {
 	loadConfig,
 	rankSkills,
 	stripSkillCatalog,
-	type Ranked,
+
 	type SkillEntry,
 } from "./jev.ts";
 import { lexicalMatches } from "./lexical.ts";
@@ -37,12 +37,11 @@ function xmlAttribute(value: string): string {
 		.replaceAll(">", "&gt;");
 }
 
-function renderSkill(ranked: Ranked): string {
-	const { skill, score, confidence } = ranked;
+function renderSkill(skill: SkillEntry, note: string): string {
 	const body = stripFrontmatter(readFileSync(skill.filePath, "utf8"));
 	return [
 		`<skill name="${xmlAttribute(skill.name)}" location="${xmlAttribute(skill.filePath)}">`,
-		`Jev rated this ${score.toFixed(2)} of 2 for the stated task (confidence ${confidence.toFixed(2)}).`,
+		note,
 		`References are relative to ${skill.baseDir}.`,
 		"",
 		body,
@@ -89,6 +88,13 @@ export default function (pi: ExtensionAPI) {
 					description: "Maximum skills to load (default 3).",
 				}),
 			),
+			names: Type.Optional(
+				Type.Array(Type.String(), {
+					maxItems: 5,
+					description:
+						"Exact skill names to load directly, skipping the ranking. Use this to pull in a skill an earlier call listed but did not load. When set, `task` is ignored and no ranking request is made.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate) {
 			if (!enabledSkills.length) {
@@ -97,6 +103,33 @@ export default function (pi: ExtensionAPI) {
 
 			const config = loadConfig();
 			const limit = params.maxSkills ?? config.maxSkills;
+
+			// Force-load path: exact names, no ranking request, no Jev tokens spent.
+			const requested: string[] = params.names ?? [];
+			if (requested.length) {
+				const byName = new Map(enabledSkills.map((entry) => [entry.name, entry]));
+				const found = requested.filter((name) => byName.has(name));
+				const missing = requested.filter((name) => !byName.has(name));
+				if (!found.length) {
+					throw new Error(
+						`None of those skill names are enabled: ${missing.join(", ")}. Call skill_search with a task instead.`,
+					);
+				}
+				const bodies = found.map((name) =>
+					renderSkill(byName.get(name)!, "Loaded by explicit request, without ranking."),
+				);
+				const note = missing.length ? ` Not found, and skipped: ${missing.join(", ")}.` : "";
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Loaded ${bodies.length} Agent Skill${bodies.length === 1 ? "" : "s"} by name.${note} Follow these instructions for the current task:\n\n${bodies.join("\n\n")}`,
+						},
+					],
+					details: { mode: "explicit", loaded: found, missing },
+				};
+			}
+
 			const task = params.task.trim();
 
 			onUpdate?.({
@@ -161,6 +194,7 @@ export default function (pi: ExtensionAPI) {
 					score,
 					confidence,
 				})),
+				alsoRanked: result.alsoRanked.map(({ skill, score }) => ({ name: skill.name, score })),
 			};
 
 			const partial = result.failures.length
@@ -179,14 +213,23 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const loaded = result.ranked.map(renderSkill);
+			const loaded = result.ranked.map(({ skill, score, confidence }) =>
+				renderSkill(skill, `Jev rated this ${score.toFixed(2)} of 2 for the stated task (confidence ${confidence.toFixed(2)}).`),
+			);
+			// Everything else above the floor, so the agent can pull one in deliberately.
+			const alsoText = result.alsoRanked.length
+				? `\n\nThese also scored above ${config.minScore} but were not loaded. Call skill_search again with names: ["..."] to load one:\n`
+					+ result.alsoRanked
+						.map(({ skill, score }) => `- ${skill.name} (${score.toFixed(2)}) — ${skill.filePath}`)
+						.join("\n")
+				: "";
 			return {
 				content: [
 					{
 						type: "text",
 						text:
 							`Jev selected and loaded ${loaded.length} Agent Skill${loaded.length === 1 ? "" : "s"} out of ${enabledSkills.length} enabled.${partial} Follow these instructions for the current task:\n\n`
-							+ loaded.join("\n\n"),
+							+ loaded.join("\n\n") + alsoText,
 					},
 				],
 				details,
