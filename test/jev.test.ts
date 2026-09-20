@@ -22,7 +22,28 @@ function skill(name: string, description: string): SkillEntry {
 	return { name, description, filePath: `/skills/${name}/SKILL.md`, baseDir: `/skills/${name}` };
 }
 
+/** The shape Pi 0.86 actually emits, captured from a live system prompt. */
 const CATALOG = [
+	"You are Pi.",
+	"",
+	"<skills>",
+	"The following skills provide specialized instructions for specific tasks.",
+	"Use the read tool to load a skill's file when the task matches.",
+	"<available_skills>",
+	"  <skill>",
+	"    <name>fleet</name>",
+	"    <description>Run commands on remote hosts</description>",
+	"  </skill>",
+	"</available_skills>",
+	"</skills>",
+	"",
+	"<cwd>",
+	"/tmp",
+	"</cwd>",
+].join("\n");
+
+/** Pre-<skills> builds emitted the bare header instead. */
+const LEGACY_CATALOG = [
 	"You are Pi.",
 	"",
 	"The following skills provide specialized instructions for specific tasks.",
@@ -32,11 +53,19 @@ const CATALOG = [
 	"Tools follow.",
 ].join("\n");
 
-test("stripSkillCatalog removes the generated block and keeps the surrounding prompt", () => {
+test("stripSkillCatalog removes the <skills> block Pi actually emits", () => {
 	const stripped = stripSkillCatalog(CATALOG);
+	assert.ok(!stripped.includes("<skills>"));
 	assert.ok(!stripped.includes("<available_skills>"));
 	assert.ok(!stripped.includes("fleet"));
 	assert.ok(stripped.startsWith("You are Pi."));
+	assert.ok(stripped.includes("<cwd>"), "content after the catalog must survive");
+});
+
+test("stripSkillCatalog still handles the legacy bare-header shape", () => {
+	const stripped = stripSkillCatalog(LEGACY_CATALOG);
+	assert.ok(!stripped.includes("<available_skills>"));
+	assert.ok(!stripped.includes("fleet"));
 	assert.ok(stripped.endsWith("Tools follow."));
 });
 
@@ -45,7 +74,7 @@ test("stripSkillCatalog is a no-op when no catalog is present", () => {
 });
 
 test("stripSkillCatalog leaves the prompt alone when the closing tag is missing", () => {
-	const truncated = CATALOG.slice(0, CATALOG.indexOf("</available_skills>"));
+	const truncated = LEGACY_CATALOG.slice(0, LEGACY_CATALOG.indexOf("</available_skills>"));
 	assert.equal(stripSkillCatalog(truncated), truncated);
 });
 

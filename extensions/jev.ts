@@ -17,8 +17,14 @@ export const DEFAULT_MIN_SCORE = 1.4;
 export const DEFAULT_DESCRIPTION_LIMIT = 1200;
 export const DEFAULT_TIMEOUT_MS = 20_000;
 
-const CATALOG_START = "\n\nThe following skills provide specialized instructions for specific tasks.";
-const CATALOG_END = "</available_skills>";
+/**
+ * Pi wraps the generated catalog in <skills>...</skills>. Older builds emitted the
+ * bare header plus <available_skills>, so both shapes are handled.
+ */
+const CATALOG_OPEN = "<skills>";
+const CATALOG_CLOSE = "</skills>";
+const LEGACY_START = "\n\nThe following skills provide specialized instructions for specific tasks.";
+const LEGACY_END = "</available_skills>";
 
 /** The ordered Score levels every skill is judged against. */
 export const RELEVANCE_LEVELS = [
@@ -65,11 +71,21 @@ export interface Ranked {
 
 /** Strip Pi's generated `<available_skills>` block from a system prompt. */
 export function stripSkillCatalog(systemPrompt: string): string {
-	const start = systemPrompt.indexOf(CATALOG_START);
-	if (start === -1) return systemPrompt;
-	const end = systemPrompt.indexOf(CATALOG_END, start);
-	if (end === -1) return systemPrompt;
-	return systemPrompt.slice(0, start) + systemPrompt.slice(end + CATALOG_END.length);
+	const open = systemPrompt.indexOf(CATALOG_OPEN);
+	if (open !== -1) {
+		const close = systemPrompt.indexOf(CATALOG_CLOSE, open);
+		if (close !== -1) {
+			// Swallow one preceding blank line so the surrounding prompt stays tidy.
+			const start = systemPrompt.slice(0, open).endsWith("\n\n") ? open - 1 : open;
+			return systemPrompt.slice(0, start) + systemPrompt.slice(close + CATALOG_CLOSE.length);
+		}
+	}
+
+	const legacyStart = systemPrompt.indexOf(LEGACY_START);
+	if (legacyStart === -1) return systemPrompt;
+	const legacyEnd = systemPrompt.indexOf(LEGACY_END, legacyStart);
+	if (legacyEnd === -1) return systemPrompt;
+	return systemPrompt.slice(0, legacyStart) + systemPrompt.slice(legacyEnd + LEGACY_END.length);
 }
 
 function positiveInteger(value: unknown, fallback: number): number {
