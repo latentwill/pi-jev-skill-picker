@@ -92,21 +92,32 @@ Reload an existing Pi session with `/reload`, or start a new session.
 
 This extension replaces `pi-skill-search`. Uninstall that one, along with its `pi-subagents` dependency if nothing else uses it. The old subagent picker forked the whole conversation into a child agent and needed a persisted session to do it. This one sends a single task string, so it needs neither.
 
-## Tool parameters
+## Tools
 
-`skill_search` accepts:
+`skill_search` ranks and loads. It accepts:
 
 - `task`: required plain-language description of what the agent is about to do, naming the concrete tools, services or files involved
 - `maxSkills`: optional limit from 1 to 5; defaults to the configured `maxSkills`
-- `names`: optional list of exact skill names to load directly. When set, `task` is ignored and no ranking request is made.
 
-A result loads the top `maxSkills` skills in full and then lists every other skill that cleared the floor, with its score and path. Nothing above the floor is hidden. A task like "review this diff and hand it to codex" puts 12 skills over 1.4, so the 9 that did not make the cut are named rather than dropped.
+It loads the top `maxSkills` skills in full, then lists every other skill that cleared the floor with its score and path. Nothing above the floor is hidden. A task like "review this diff and hand it to codex" puts 12 skills over 1.4, so the 9 that missed the cut are named rather than dropped.
 
-The agent loads one of those by calling `skill_search` again with `names`. That path reads the files straight off disk, so it skips Jev entirely and costs nothing.
+`skill_load` loads by name and never calls Jev. It accepts:
 
-That `task` string is everything Jev sees of the request, so ranking quality rests on it. When the wrong skills load, the string is recorded in the tool call details and is the first place to look.
+- `names`: one to five exact skill names, as `skill_search` reported them
 
-Disabled skills stay undiscoverable, because the extension rates Pi's resolved enabled-skill list.
+Use it for a skill that `skill_search` listed but did not load, or when the name is already known. Files are read straight off disk, so it costs no tokens and adds no latency.
+
+A name that does not match returns close alternatives instead of failing:
+
+```
+No skill named 'fleece'. Did you mean 'fleet'?
+```
+
+Matching ignores case and separators, so `Fleet` and `review codex auto` resolve to `fleet` and `review-codex-auto` and load without a second call. Anything further off is reported as a suggestion for the agent to confirm. One bad name among good ones does not fail the call: the rest load and the miss is noted at the end.
+
+Both tools return skill content as tool results. Neither writes to the system prompt, which is what keeps the cached prefix stable across turns.
+
+Disabled skills stay undiscoverable, because both tools work from Pi's resolved enabled-skill list.
 
 ## Development
 

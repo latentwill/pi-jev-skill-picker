@@ -22,6 +22,7 @@ import {
 	type SkillEntry,
 } from "./jev.ts";
 import { lexicalMatches } from "./lexical.ts";
+import { didYouMean, suggestNames } from "./fuzzy.ts";
 
 export { stripSkillCatalog };
 
@@ -67,6 +68,92 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
+		name: "skill_load",
+		label: "Skill Load",
+		description:
+			"Load named Agent Skills in full, straight from disk. Use it for a skill skill_search listed but did not load, or when you already know the exact name. A name that does not match returns close alternatives rather than failing.",
+		promptSnippet: "Load Agent Skills by exact name",
+		promptGuidelines: [
+			"Use skill_load when you know which skill you want. Use skill_search when you do not.",
+		],
+		parameters: Type.Object({
+			names: Type.Array(Type.String({ minLength: 1 }), {
+				minItems: 1,
+				maxItems: 5,
+				description: "Exact skill names, as skill_search reported them.",
+			}),
+		}),
+		async execute(_toolCallId, params) {
+			if (!enabledSkills.length) {
+				throw new Error("No enabled Agent Skills are available to load.");
+			}
+
+			const byName = new Map(enabledSkills.map((entry) => [entry.name, entry]));
+			const allNames = enabledSkills.map((entry) => entry.name);
+			const loaded: SkillEntry[] = [];
+			const misses: { name: string; suggestions: string[] }[] = [];
+			const seen = new Set<string>();
+
+			for (const requested of params.names) {
+				const name = requested.trim();
+				const exact = byName.get(name);
+				if (exact) {
+					if (!seen.has(exact.name)) {
+						seen.add(exact.name);
+						loaded.push(exact);
+					}
+					continue;
+				}
+				const suggestions = suggestNames(name, allNames);
+				// A single unambiguous case or separator slip is the same skill, so take it.
+				if (suggestions.length === 1 && (suggestions[0]!.reason === "case" || suggestions[0]!.reason === "separator")) {
+					const resolved = byName.get(suggestions[0]!.name)!;
+					if (!seen.has(resolved.name)) {
+						seen.add(resolved.name);
+						loaded.push(resolved);
+					}
+					continue;
+				}
+				misses.push({ name, suggestions: suggestions.map((entry) => entry.name) });
+			}
+
+			const problems = misses.map(({ name, suggestions }) => {
+				const hint = didYouMean(suggestions.map((s) => ({ name: s, reason: "typo" as const })));
+				return hint
+					? `No skill named '${name}'.${hint}`
+					: `No skill named '${name}', and nothing close to it is enabled.`;
+			});
+
+			if (!loaded.length) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${problems.join(" ")} Call skill_load again with an exact name, or skill_search with a task description.`,
+						},
+					],
+					details: { loaded: [], misses },
+					isError: true,
+				};
+			}
+
+			const bodies = loaded.map((skill) => renderSkill(skill, "Loaded by name, without ranking."));
+			const note = problems.length ? `\n\n${problems.join(" ")}` : "";
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`Loaded ${bodies.length} Agent Skill${bodies.length === 1 ? "" : "s"} by name. Follow these instructions for the current task:\n\n`
+							+ bodies.join("\n\n") + note,
+					},
+				],
+				details: { loaded: loaded.map((entry) => entry.name), misses },
+			};
+		},
+	});
+
+	pi.registerTool({
 		name: "skill_search",
 		label: "Skill Search",
 		description:
@@ -88,13 +175,7 @@ export default function (pi: ExtensionAPI) {
 					description: "Maximum skills to load (default 3).",
 				}),
 			),
-			names: Type.Optional(
-				Type.Array(Type.String(), {
-					maxItems: 5,
-					description:
-						"Exact skill names to load directly, skipping the ranking. Use this to pull in a skill an earlier call listed but did not load. When set, `task` is ignored and no ranking request is made.",
-				}),
-			),
+
 		}),
 		async execute(_toolCallId, params, signal, onUpdate) {
 			if (!enabledSkills.length) {
@@ -103,32 +184,6 @@ export default function (pi: ExtensionAPI) {
 
 			const config = loadConfig();
 			const limit = params.maxSkills ?? config.maxSkills;
-
-			// Force-load path: exact names, no ranking request, no Jev tokens spent.
-			const requested: string[] = params.names ?? [];
-			if (requested.length) {
-				const byName = new Map(enabledSkills.map((entry) => [entry.name, entry]));
-				const found = requested.filter((name) => byName.has(name));
-				const missing = requested.filter((name) => !byName.has(name));
-				if (!found.length) {
-					throw new Error(
-						`None of those skill names are enabled: ${missing.join(", ")}. Call skill_search with a task instead.`,
-					);
-				}
-				const bodies = found.map((name) =>
-					renderSkill(byName.get(name)!, "Loaded by explicit request, without ranking."),
-				);
-				const note = missing.length ? ` Not found, and skipped: ${missing.join(", ")}.` : "";
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Loaded ${bodies.length} Agent Skill${bodies.length === 1 ? "" : "s"} by name.${note} Follow these instructions for the current task:\n\n${bodies.join("\n\n")}`,
-						},
-					],
-					details: { mode: "explicit", loaded: found, missing },
-				};
-			}
 
 			const task = params.task.trim();
 
@@ -218,7 +273,7 @@ export default function (pi: ExtensionAPI) {
 			);
 			// Everything else above the floor, so the agent can pull one in deliberately.
 			const alsoText = result.alsoRanked.length
-				? `\n\nThese also scored above ${config.minScore} but were not loaded. Call skill_search again with names: ["..."] to load one:\n`
+				? `\n\nThese also scored above ${config.minScore} but were not loaded. Use skill_load to pull one in:\n`
 					+ result.alsoRanked
 						.map(({ skill, score }) => `- ${skill.name} (${score.toFixed(2)}) — ${skill.filePath}`)
 						.join("\n")
