@@ -78,9 +78,19 @@ test("stripSkillCatalog leaves the prompt alone when the closing tag is missing"
 	assert.equal(stripSkillCatalog(truncated), truncated);
 });
 
-test("shard splits evenly and keeps the remainder", () => {
+test("shard derives a count from the target size and balances the split", () => {
 	assert.deepEqual(shard([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
 	assert.deepEqual(shard([], 2), []);
+
+	// 137 skills at a target of 50 must not become the lopsided 50+50+37.
+	const many = Array.from({ length: 137 }, (_, i) => i);
+	const sizes = shard(many, 50).map((s) => s.length);
+	assert.deepEqual(sizes, [46, 46, 45]);
+	assert.equal(sizes.reduce((a, b) => a + b, 0), 137);
+	assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, "shards differ by at most one item");
+
+	// Nothing is dropped or duplicated.
+	assert.deepEqual(shard(many, 50).flat(), many);
 });
 
 test("shorten collapses whitespace and appends an ellipsis past the limit", () => {
@@ -154,7 +164,7 @@ test("loadConfig falls back to defaults when the config file is unreadable", () 
 	const config = loadConfig({}, () => { throw new Error("ENOENT"); });
 	assert.equal(config.apiKey, undefined);
 	assert.equal(config.model, DEFAULT_MODEL);
-	assert.equal(config.shardSize, 25);
+	assert.equal(config.shardSize, 50);
 });
 
 test("rankSkills fans out across shards and merges the answers", async () => {
@@ -178,6 +188,33 @@ test("rankSkills fans out across shards and merges the answers", async () => {
 	assert.equal(result.model, "jev-1.13.0");
 	assert.equal(result.ranked.length, 3);
 	assert.deepEqual(result.failures, []);
+});
+
+test("rankSkills maps answers to the right skills when shards are uneven", async () => {
+	// 7 skills at a target of 3 balances to 3+2+2, so offsets are 0,3,5 — never
+	// multiples of the target. Each skill is scored by its own index so any
+	// misalignment shows up as the wrong names coming back.
+	const skills = Array.from({ length: 7 }, (_, i) => skill(`s${i}`, ""));
+	const config = { ...loadConfig({}, () => "{}"), apiKey: "k", shardSize: 3, minScore: 0 } as JevConfig;
+	const fakeFetch = (async (_url: string, init: RequestInit) => {
+		const body = JSON.parse(String(init.body)) as { questions: Record<string, unknown> };
+		const answers: Record<string, unknown> = {};
+		for (const id of Object.keys(body.questions)) {
+			const index = Number(id.replace("skill_", ""));
+			answers[id] = { type: "score", score: index / 10, confidence: 0.5 };
+		}
+		return new Response(JSON.stringify({ answers }), { status: 200 });
+	}) as unknown as typeof fetch;
+
+	const result = await rankSkills("t", skills, config, 7, undefined, fakeFetch);
+	assert.equal(result.shards, 3);
+	assert.equal(result.ranked.length, 7);
+	// Highest index scores highest, so order must be s6..s0 with matching scores.
+	assert.deepEqual(result.ranked.map((r) => r.skill.name), ["s6", "s5", "s4", "s3", "s2", "s1", "s0"]);
+	for (const entry of result.ranked) {
+		const index = Number(entry.skill.name.slice(1));
+		assert.equal(entry.score, index / 10, `${entry.skill.name} got another skill's score`);
+	}
 });
 
 test("rankSkills survives a partial shard failure and reports it", async () => {

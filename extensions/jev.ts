@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 export const SYSTEM_ONE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export const DEFAULT_MODEL = "jev-latest";
-export const DEFAULT_SHARD_SIZE = 25;
+export const DEFAULT_SHARD_SIZE = 50;
 export const DEFAULT_MAX_SKILLS = 3;
 export const DEFAULT_MIN_SCORE = 1.4;
 export const DEFAULT_DESCRIPTION_LIMIT = 1200;
@@ -140,10 +140,23 @@ export function shorten(value: string, maximum: number): string {
 	return collapsed.length <= maximum ? collapsed : `${collapsed.slice(0, maximum - 1).trimEnd()}…`;
 }
 
+/**
+ * Split into evenly sized shards. `size` is a target maximum, not a fixed chunk:
+ * the shard count comes from it, then items are spread evenly across that many
+ * shards. Latency tracks the largest shard, so a lopsided tail (100+37) costs
+ * far more than the same work split evenly (69+68).
+ */
 export function shard<T>(items: T[], size: number): T[][] {
+	if (items.length === 0) return [];
+	const count = Math.max(1, Math.ceil(items.length / Math.max(1, size)));
+	const base = Math.floor(items.length / count);
+	const remainder = items.length % count;
 	const shards: T[][] = [];
-	for (let index = 0; index < items.length; index += size) {
-		shards.push(items.slice(index, index + size));
+	let index = 0;
+	for (let n = 0; n < count; n++) {
+		const take = base + (n < remainder ? 1 : 0);
+		shards.push(items.slice(index, index + take));
+		index += take;
 	}
 	return shards;
 }
@@ -304,9 +317,18 @@ export async function rankSkills(
 	fetchImpl: typeof fetch = fetch,
 ): Promise<{ ranked: Ranked[]; model?: string; inputTokens: number; shards: number; failures: string[] }> {
 	const shards = shard(skills, config.shardSize);
+	// Offsets must follow the actual shard lengths. Shards are balanced, so they
+	// are not multiples of shardSize, and index * shardSize would map answers
+	// onto the wrong skills.
+	const offsets: number[] = [];
+	let running = 0;
+	for (const batch of shards) {
+		offsets.push(running);
+		running += batch.length;
+	}
 	const results = await Promise.all(
 		shards.map(async (batch, index) => {
-			const offset = index * config.shardSize;
+			const offset = offsets[index]!;
 			try {
 				const response = await askJev(buildRequest(task, batch, offset, config), config, signal, fetchImpl);
 				return { response, offset, error: undefined as string | undefined };
