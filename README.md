@@ -67,10 +67,19 @@ Raise `minScore` if too many adjacent skills load, and lower it if a relevant sk
 ## Install
 
 ```sh
-pi install git:github.com/safzanpirani/pi-jev-skill-picker
+omp plugin install git:github.com/latentwill/pi-jev-skill-picker
 ```
 
 Reload an existing Pi session with `/reload`, or start a new session.
+
+## Compatibility
+
+This branch requires **omp 18.x** (the `@oh-my-pi/*` packages). Two host API changes drive that floor:
+
+- `before_agent_start` no longer carries `systemPromptOptions`. The event exposes the assembled `systemPrompt: string[]`, and the skill list comes from `pi.pi.discoverSkills(cwd)` — the same discovery pass that renders the `<skills>` catalog — so what is ranked matches what the prompt would have shown.
+- `ToolDefinition.promptSnippet` and `promptGuidelines` were removed. Both tools now carry that guidance in `description`, which the host renders wherever it lists the tool.
+
+Against the old `@earendil-works/*` API (Pi ≤ 0.84) the extension throws on every prompt, because the event no longer has the shape it reads. Use upstream `v0.1.0` there, and this branch on omp ≥ 18.
 
 This extension replaces `pi-skill-search`. Uninstall that one, along with its `pi-subagents` dependency if nothing else uses it. The old subagent picker forked the whole conversation into a child agent and needed a persisted session to do it. This one sends a single task string, so it needs neither.
 

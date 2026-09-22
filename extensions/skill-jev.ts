@@ -8,8 +8,8 @@
  * across parallel requests — and returns the full SKILL.md of the winners.
  */
 
-import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Skill } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
 import { readFileSync } from "node:fs";
 
 import {
@@ -60,22 +60,46 @@ function toEntries(skills: Skill[]): SkillEntry[] {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Injected TypeBox shim; the call sites below keep the classic Type.Object(...) shape.
+	const Type = pi.typebox.Type;
 	let enabledSkills: SkillEntry[] = [];
 
-	pi.on("before_agent_start", async (event) => {
-		enabledSkills = toEntries(event.systemPromptOptions.skills ?? []);
-		return { systemPrompt: stripSkillCatalog(event.systemPrompt) };
+	// omp ≥18 dropped `systemPromptOptions` from before_agent_start: the event now
+	// carries the assembled system prompt as string[]. The skill list comes from the
+	// host's own discovery pipeline — the same one that renders the <skills> catalog
+	// — memoized briefly so policy-preparation retries stay cheap.
+	let discoveryCache: { at: number; skills: SkillEntry[] } | null = null;
+
+	async function loadEnabledSkills(cwd: string | undefined): Promise<SkillEntry[]> {
+		const now = Date.now();
+		if (discoveryCache && now - discoveryCache.at < 5_000) return discoveryCache.skills;
+		let skills: SkillEntry[] = [];
+		try {
+			const result = await pi.pi.discoverSkills(cwd);
+			// Shape drift guard: discovery resolves to { skills, warnings }; older
+			// builds returned the bare array.
+			const discovered: Skill[] = Array.isArray(result) ? result : result.skills;
+			skills = toEntries(discovered.filter((skill) => !skill.hide));
+		} catch (error) {
+			pi.logger.warn(
+				`skill-jev: skill discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		discoveryCache = { at: now, skills };
+		return skills;
+	}
+
+	pi.on("before_agent_start", async (event, ctx) => {
+		const base = event.systemPrompt.join("\n\n");
+		enabledSkills = await loadEnabledSkills(ctx.cwd);
+		return { systemPrompt: [stripSkillCatalog(base)] };
 	});
 
 	pi.registerTool({
 		name: "skill_load",
 		label: "Skill Load",
 		description:
-			"Load named Agent Skills in full, straight from disk. Use it for a skill skill_search listed but did not load, or when you already know the exact name. A name that does not match returns close alternatives rather than failing.",
-		promptSnippet: "Load Agent Skills by exact name",
-		promptGuidelines: [
-			"Use skill_load when you know which skill you want. Use skill_search when you do not.",
-		],
+			"Load named Agent Skills in full, straight from disk. Use it when you already know which skill you want — for example one skill_search listed but did not load. Use skill_search instead when you do not know the name. A name that does not match returns close alternatives rather than failing.",
 		parameters: Type.Object({
 			names: Type.Array(Type.String({ minLength: 1 }), {
 				minItems: 1,
@@ -157,11 +181,7 @@ export default function (pi: ExtensionAPI) {
 		name: "skill_search",
 		label: "Skill Search",
 		description:
-			"Rate every enabled Agent Skill against the current task with TypeSafe's Jev and load the full instructions of the ones that actually apply. Describe the task in plain language; do not guess skill names.",
-		promptSnippet: "Find and load the Agent Skills that apply to the current task",
-		promptGuidelines: [
-			"The Agent Skills catalog is intentionally omitted from this prompt. Before substantive work where a specialized workflow, private CLI or house convention may exist, call skill_search once with a plain-language description of the task. It returns the complete instructions of any skill that applies, or says that none do.",
-		],
+			"Rate every enabled Agent Skill against the current task with TypeSafe's Jev and load the full instructions of the ones that actually apply. The Agent Skills catalog is deliberately omitted from the system prompt, so before substantive work where a specialized workflow, private CLI or house convention may exist, call this once with a plain-language description of the task. It returns the complete instructions of any skill that applies, or says that none do. Describe the task in plain language; do not guess skill names.",
 		parameters: Type.Object({
 			task: Type.String({
 				minLength: 3,
